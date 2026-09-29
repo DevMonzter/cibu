@@ -363,24 +363,25 @@ sub mount {
     return $dir;
 }
 
-#Checks if the grub on the system has support for BIOS and/or EFI boot mode by checking if the directories /usr/lib/grub/i386-pc and /usr/lib/grub/x86_64-efi exist.
+#Checks if the grub on the system has support for BIOS and/or EFI boot mode by checking if the directories i386-pc and x86_64-efi exist in the dir given as argument.
 #Returns a hash with keys 'BIOS' and 'EFI' with value 1 if support for that boot mode is found. If no support for either boot mode is found, prints an error message and exits with code 1.
 sub check_bios_efi_support {
+    my $dir = shift;
     my $support = {};
-    $support->{BIOS} = 1 if( -d '/usr/lib/grub/i386-pc');
-    $support->{EFI} = 1 if( -d '/usr/lib/grub/x86_64-efi');
+    my $subdirstomode = {
+        'i386-pc' => 'BIOS',
+        "x86_64-efi" => 'EFI',
+    };
+    foreach my $subdir (keys %$subdirstomode) {
+        if(-d "$dir/$subdir") {
+            $support->{$subdirstomode->{$subdir}} = 1;
+            mysay "Found $subdir directory in $dir, adding support for $subdirstomode->{$subdir} boot mode.";
+        } else {
+            mysay "No $subdir directory in $dir, skipping support for $subdirstomode->{$subdir} boot mode.";
+        }
+    }
     if(keys(%$support) == 0) {
-        myerror "Neither support for BIOS or EFI was found in your grub";
-    }
-    if(exists $support->{BIOS}) {
-        mysay "Grub BIOS support found.";
-    } else {
-        mysay "WARNING: no /usr/lib/grub/i386-pc dir. Skipping Grub BIOS support";
-    }
-    if(exists $support->{EFI}) {
-        mysay "Grub EFI support found.";
-    } else {
-        mysay "WARNING: no /usr/lib/grub/x86_64-efi dir. Skipping Grub EFI support";
+        myerror "No support for BIOS or EFI boot mode found in the grub at $dir. Please install grub with support for at least one of these boot modes.";
     }
     return $support;
 }
@@ -451,15 +452,15 @@ sub create_new_device {
 }
 
 #Installs cibu on a device that already has the correct partition table.
-#First argument is the device, 2nd argument the cibu partition, 3rd is the dir where the grub config files are located
+#First argument is the device, 2nd argument the cibu partition, 3rd is the dir where the grub config files are located, 4th is where grub is located on the system (usually /usr/lib/grub)
 #It is expected that the cibu partition already has the correct label and (empty) filesystem. Returns the mountpoint of the cibu partition
 sub install_cibu {
-    my ($devpath, $cibupart, $grubconfigdir) = @_;
+    my ($devpath, $cibupart, $grubconfigdir, $grublibdir) = @_;
     mysay "Installing CIBU on the device...";
     mysay ""; my $grubversion = grub_grub2_choice();
     mysay ""; umount($cibupart); #Just in case it's automounted
     mysay ""; my $cibumnt = mount($cibupart);
-    mysay ""; my $support = check_bios_efi_support();
+    mysay ""; my $support = check_bios_efi_support($grublibdir);
     mysay ""; install_grub($grubversion->{installer}, $support, $cibumnt, $devpath);
     mysay ""; copy_grub_config($grubconfigdir, "$cibumnt/boot/$grubversion->{configdir}");
     return $cibumnt;
@@ -550,6 +551,7 @@ sub find_dir_with_cibu_binary {
 
 
 $settings = read_commandline_options();
+$settings->{grublibdir} = '/usr/lib/grub';  #Where the grub2 libraries are located. As far as I know this is the same on all distros, so I didn't make it a commandline option.
 show_help() if $settings->{help};
 my $user = run_as_root();
 showdisclaimer();
@@ -560,7 +562,7 @@ mysay ""; check_available_programs(qw(lsblk fdisk sgdisk partprobe mkfs.fat mkfs
 mysay ""; my $devpath = choose_device();
 mysay ""; my ($cibupart, $isopart) = @{create_device_if_wanted($devpath, $ddlength)};
 my $cibudir = find_dir_with_cibu_binary(); my $grubconfigdir = "$cibudir/grub2";
-mysay ""; my $cibumnt = install_cibu($devpath, $cibupart, $grubconfigdir);
+mysay ""; my $cibumnt = install_cibu($devpath, $cibupart, $grubconfigdir, $settings->{grublibdir});
 mysay ""; create_initrd("$cibudir/extra_initrds/alpine", "$cibumnt/alpine-initrd");
 mysay ""; my $isosmnt = create_isos_dirs($isopart, $grubconfigdir, $isosdir, $user);
 #Finishing up
